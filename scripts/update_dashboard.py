@@ -96,14 +96,32 @@ def update_index_html(json_path=None, html_path=None):
     with open(html_path, "r", encoding="utf-8") as f:
         html_content = f.read()
 
+    import datetime
+    # Format timestamp in IST (UTC+5:30)
+    utc_now = datetime.datetime.now(datetime.timezone.utc)
+    ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
+    timestamp_str = ist_now.strftime("%d %b %Y, %I:%M %p IST")
+
+    # Update HTML header timestamp span
+    html_content = re.sub(
+        r'(<span id="lastUpdatedTimestamp"[^>]*>)[^<]*(</span>)',
+        rf'\g<1>{timestamp_str}\g<2>',
+        html_content
+    )
+
     # Robust replacement using exact delimiters
-    start_marker = "const DATA = "
+    if "const LAST_UPDATED = " in html_content:
+        start_marker = "const LAST_UPDATED = "
+    else:
+        start_marker = "const DATA = "
     end_marker = "let state = {"
     start_idx = html_content.find(start_marker)
     end_idx = html_content.find(end_marker)
 
+    replacement_block = f'const LAST_UPDATED = "{timestamp_str}";\n        const DATA = {json_str};\n\n        '
+
     if start_idx != -1 and end_idx != -1:
-        html_content = html_content[:start_idx] + f"const DATA = {json_str};\n\n        " + html_content[end_idx:]
+        html_content = html_content[:start_idx] + replacement_block + html_content[end_idx:]
     else:
         pattern = r"const DATA\s*=\s*\[[\s\S]*?\];"
         if re.search(pattern, html_content):
