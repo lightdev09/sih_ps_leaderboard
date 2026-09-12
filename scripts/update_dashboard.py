@@ -96,19 +96,23 @@ def update_index_html(json_path=None, html_path=None):
     with open(html_path, "r", encoding="utf-8") as f:
         html_content = f.read()
 
-    # Match and replace `const DATA = [...];` in index.html
-    pattern = r"const DATA = \[[\s\S]*?\];"
-    replacement = f"const DATA = {json_str};"
+    # Robust replacement using exact delimiters
+    start_marker = "const DATA = "
+    end_marker = "let state = {"
+    start_idx = html_content.find(start_marker)
+    end_idx = html_content.find(end_marker)
 
-    if not re.search(pattern, html_content):
-        print("Warning: Could not find `const DATA = [...]` in index.html. Checking fallback placeholder...")
-        if "__DATA_PLACEHOLDER__" in html_content:
+    if start_idx != -1 and end_idx != -1:
+        html_content = html_content[:start_idx] + f"const DATA = {json_str};\n\n        " + html_content[end_idx:]
+    else:
+        pattern = r"const DATA\s*=\s*\[[\s\S]*?\];"
+        if re.search(pattern, html_content):
+            html_content = re.sub(pattern, f"const DATA = {json_str};", html_content, count=1)
+        elif "__DATA_PLACEHOLDER__" in html_content:
             html_content = html_content.replace("__DATA_PLACEHOLDER__", json_str)
         else:
             print("Error: Could not locate data injection target in index.html.")
             sys.exit(1)
-    else:
-        html_content = re.sub(pattern, replacement, html_content, count=1)
 
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
