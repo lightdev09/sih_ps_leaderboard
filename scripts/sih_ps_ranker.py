@@ -354,6 +354,10 @@ def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_l
             print(f"No further pages or error finding next button: {e}")
             break
 
+    if not results:
+        print("Warning: No records gathered from browser traversal. Falling back to direct HTTP extraction...")
+        return scrape_via_http(base_url)
+
     return results
 
 
