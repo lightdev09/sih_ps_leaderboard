@@ -33,7 +33,7 @@ jobs:
 
       - name: Scrape SIH Problem Statements (Headless)
         run: |
-          python scripts/sih_ps_ranker.py --headless
+          python scripts/sih_ps_ranker.py --headless --require-live
 
       - name: Recompile Dashboard
         run: |

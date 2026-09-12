@@ -491,6 +491,11 @@ def main():
         help="Limit number of pages to scrape (useful for quick testing)."
     )
     parser.add_argument(
+        "--require-live",
+        action="store_true",
+        help="Fail instead of using the cached dataset when live scraping fails."
+    )
+    parser.add_argument(
         "--csv",
         default=os.path.join("data", "sih_ps_ranked.csv"),
         help="Output CSV file path."
@@ -509,10 +514,12 @@ def main():
         return
 
     records = []
+    live_data = False
     try:
         driver = setup_browser(headless=args.headless)
         try:
             records = scrape_live_site(driver, base_url=args.url, page_limit=args.pages)
+            live_data = True
         finally:
             driver.quit()
             print("Browser closed.")
@@ -521,16 +528,21 @@ def main():
         print("Switching to direct HTTP extraction fallback...")
         try:
             records = scrape_via_http(base_url=args.url)
+            live_data = True
         except Exception as http_err:
             print(f"Direct HTTP extraction failed: {http_err}")
+            if args.require_live:
+                print("LIVE_DATA=false: live scraping was required but unavailable.")
+                return 1
             records = load_existing_results(args.json)
             if records:
-                print(f"Using last successful dataset from {args.json}.")
+                print(f"LIVE_DATA=false: using last successful dataset from {args.json}.")
             else:
                 print("Error: No live or cached records are available.")
                 return 1
 
     if records:
+        print(f"LIVE_DATA={'true' if live_data else 'false'}")
         save_and_rank_results(records, csv_file=args.csv, json_file=args.json)
     else:
         print("Error: No records could be extracted from live portal or local fallback.")
