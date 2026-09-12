@@ -1,5 +1,6 @@
 # Extra / Unused files
 extra/
+actions-runner/
 
 # Python cache & artifacts
 __pycache__/

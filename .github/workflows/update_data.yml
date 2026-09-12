@@ -2,19 +2,18 @@ name: Update SIH Problem Statement Data
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs automatically every 6 hours
-  workflow_dispatch: # Allows manual execution via GitHub UI button
-  push:
-    paths:
-      - 'scripts/**'
-      - '.github/workflows/**'
+    - cron: '0 */6 * * *' # Runs every 6 hours (when your PC is on)
+  workflow_dispatch: # Manual trigger via GitHub UI
 
 permissions:
   contents: write
 
 jobs:
   scrape-and-update:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout Repository
@@ -23,17 +22,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.x'
 
       - name: Install Dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Scrape SIH Problem Statements (Headless)
+      - name: Scrape SIH Problem Statements
         run: |
-          python scripts/sih_ps_ranker.py --headless --require-live
+          python scripts/sih_ps_ranker.py --headless
 
       - name: Recompile Dashboard
         run: |
@@ -50,4 +48,3 @@ jobs:
             git commit -m "Auto-update SIH 2026 problem statements [skip ci]"
             git push
           fi
-
