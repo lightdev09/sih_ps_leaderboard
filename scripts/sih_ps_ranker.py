@@ -241,102 +241,63 @@ def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_l
 
     while True:
         print(f"\n--- Processing Page {page_num} ---")
-        time.sleep(1.5)
+        time.sleep(1.0)
 
-        # Retrieve all table rows for current page
-        table = driver.find_element(By.ID, "dataTablePS")
-        tbody = table.find_element(By.TAG_NAME, "tbody")
-        rows = tbody.find_elements(By.XPATH, "./tr")
-        print(f"Found {len(rows)} rows on page {page_num}.")
+        soup = BeautifulSoup(driver.page_source, "html.parser")
 
-        for i in range(len(rows)):
-            try:
-                # Re-fetch rows in case DOM references refreshed
-                rows = driver.find_elements(By.XPATH, "//table[@id='dataTablePS']/tbody/tr")
-                if i >= len(rows):
-                    break
-                row = rows[i]
-                tds = row.find_elements(By.XPATH, "./td")
-                if len(tds) < 8:
-                    continue
-
-                s_no = tds[0].text.strip()
-                organization = tds[1].text.strip()
-                category = tds[3].text.strip()
-                ps_number = tds[4].text.strip()
-                raw_submission_count = tds[5].text.strip()
-                theme = tds[6].text.strip()
-                deadline = tds[7].text.strip()
-
-                # Locate title link that opens the modal
-                title_link = None
-                try:
-                    title_link = tds[2].find_element(By.TAG_NAME, "a")
-                    title = title_link.text.strip()
-                except Exception:
-                    title = tds[2].text.strip()
-
-                print(f"[{s_no}] Opening PS {ps_number}: {title[:40]}... (Submissions: {raw_submission_count})")
-
-                description = ""
-                # Open modal by clicking link
-                if title_link:
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", title_link)
-                    time.sleep(0.3)
-                    try:
-                        driver.execute_script("arguments[0].click();", title_link)
-                    except Exception:
-                        title_link.click()
-
-                    # Wait briefly for modal to appear
-                    time.sleep(random.uniform(0.4, 0.7))
-
-                    # Extract modal details if present
-                    try:
-                        modal_target = title_link.get_attribute("data-target")
-                        if modal_target:
-                            modal_id = modal_target.lstrip("#")
-                            modal_elem = driver.find_element(By.ID, modal_id)
-                            desc_cells = modal_elem.find_elements(
-                                By.XPATH, ".//tr[th[contains(text(), 'Description')]]/td"
-                            )
-                            if desc_cells:
-                                description = desc_cells[0].text.strip()
-                    except Exception:
-                        pass
-
-                    # Close modal to prevent screen blockage
-                    try:
-                        close_btn = driver.find_elements(By.XPATH, "//div[contains(@class,'modal') and contains(@class,'show')]//button[contains(@class,'close')]")
-                        if not close_btn:
-                            close_btn = driver.find_elements(By.XPATH, "//button[@data-dismiss='modal']")
-                        if close_btn:
-                            driver.execute_script("arguments[0].click();", close_btn[0])
-                        else:
-                            driver.execute_script("$('.modal').modal('hide');")
-                    except Exception:
-                        driver.execute_script("$('.modal').modal('hide');")
-
-                    time.sleep(0.3)
-
-                total_submissions = parse_submission_count(raw_submission_count)
-
-                results.append({
-                    "s_no": s_no,
-                    "ps_number": ps_number,
-                    "title": title,
-                    "organization": organization,
-                    "category": category,
-                    "theme": theme,
-                    "raw_submission_count": raw_submission_count,
-                    "total_submissions": total_submissions,
-                    "deadline": deadline,
-                    "description": description
-                })
-
-            except Exception as row_err:
-                print(f"Error processing row {i}: {row_err}")
+        # Pre-index all modal descriptions on this page for instant lookup
+        modal_descriptions = {}
+        for m in soup.find_all("div", class_=lambda c: c and "modal" in c):
+            m_id = m.get("id")
+            if not m_id:
                 continue
+            desc_td = m.find("th", string=re.compile("Description", re.I))
+            if desc_td and desc_td.find_next_sibling("td"):
+                modal_descriptions[m_id] = desc_td.find_next_sibling("td").get_text(strip=True)
+
+        table = soup.find("table", id="dataTablePS")
+        if not table:
+            break
+        tbody = table.find("tbody")
+        if not tbody:
+            break
+        rows = tbody.find_all("tr", recursive=False)
+        print(f"Extracted {len(rows)} rows from DOM (indexed {len(modal_descriptions)} modal descriptions).")
+
+        for row in rows:
+            tds = row.find_all("td", recursive=False)
+            if len(tds) < 8:
+                continue
+
+            s_no = tds[0].get_text(strip=True)
+            organization = tds[1].get_text(strip=True)
+            title_link = tds[2].find("a")
+            title = title_link.get_text(strip=True) if title_link else tds[2].get_text(strip=True)
+            category = tds[3].get_text(strip=True)
+            ps_number = tds[4].get_text(strip=True)
+            raw_submission_count = tds[5].get_text(strip=True)
+            theme = tds[6].get_text(strip=True)
+            deadline = tds[7].get_text(strip=True)
+
+            modal_id = ""
+            if title_link and title_link.get("data-target"):
+                modal_id = title_link.get("data-target").lstrip("#")
+
+            description = modal_descriptions.get(modal_id, "")
+            total_submissions = parse_submission_count(raw_submission_count)
+
+            results.append({
+                "s_no": s_no,
+                "ps_number": ps_number,
+                "title": title,
+                "organization": organization,
+                "category": category,
+                "theme": theme,
+                "raw_submission_count": raw_submission_count,
+                "total_submissions": total_submissions,
+                "deadline": deadline,
+                "description": description
+            })
 
         if page_limit and page_num >= page_limit:
             print(f"Reached page limit ({page_limit}). Stopping pagination.")
@@ -350,12 +311,21 @@ def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_l
                 print("Reached last page. Pagination finished.")
                 break
 
+            first_ps = rows[0].find_all("td")[4].get_text(strip=True)
             next_link = next_btn.find_element(By.TAG_NAME, "a")
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_link)
-            time.sleep(0.5)
             driver.execute_script("arguments[0].click();", next_link)
+
+            # Wait for table content to update
+            for _ in range(25):
+                time.sleep(0.2)
+                cur_soup = BeautifulSoup(driver.page_source, "html.parser")
+                cur_table = cur_soup.find("table", id="dataTablePS")
+                if cur_table and cur_table.find("tbody"):
+                    cur_rows = cur_table.find("tbody").find_all("tr", recursive=False)
+                    if cur_rows and len(cur_rows[0].find_all("td")) > 4:
+                        if cur_rows[0].find_all("td")[4].get_text(strip=True) != first_ps:
+                            break
             page_num += 1
-            time.sleep(1.5)
         except Exception as e:
             print(f"No further pages or error finding next button: {e}")
             break
