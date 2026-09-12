@@ -32,23 +32,15 @@ def parse_submission_count(count_str):
     return 0
 
 
-def parse_local_html(file_path):
+def parse_html_content(html):
     """
-    Parses local HTML file (e.g., Smart India Hackathon.html) and extracts all PS data.
+    Parses HTML content and extracts all problem statements from dataTablePS.
     """
-    if not os.path.exists(file_path):
-        print(f"Error: Local file '{file_path}' not found.")
-        sys.exit(1)
-
-    print(f"Parsing local file: {file_path}")
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-        html = f.read()
-
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", id="dataTablePS")
     if not table:
         print("Error: Could not find table with id 'dataTablePS' in HTML.")
-        sys.exit(1)
+        return []
 
     tbody = table.find("tbody")
     rows = tbody.find_all("tr", recursive=False)
@@ -100,6 +92,21 @@ def parse_local_html(file_path):
     return results
 
 
+def parse_local_html(file_path):
+    """
+    Parses local HTML file and extracts all PS data.
+    """
+    if not os.path.exists(file_path):
+        print(f"Error: Local file '{file_path}' not found.")
+        sys.exit(1)
+
+    print(f"Parsing local file: {file_path}")
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        html = f.read()
+
+    return parse_html_content(html)
+
+
 def setup_browser(headless=False):
     """
     Initializes a Chrome browser instance configured to bypass automated bot detection.
@@ -129,9 +136,13 @@ def setup_browser(headless=False):
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
     options.add_argument("--start-maximized")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-popup-blocking")
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--allow-running-insecure-content")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
@@ -162,6 +173,31 @@ def setup_browser(headless=False):
     return driver
 
 
+def scrape_via_http(base_url="https://www.sih.gov.in/sih2026PS"):
+    """
+    Direct HTTP fallback using urllib and SSL bypass.
+    Extracts all 240 problem statements from server-rendered HTML.
+    """
+    import urllib.request
+    import ssl
+    print(f"Attempting direct HTTP fetch from {base_url}...")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(
+        base_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+    )
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+        html = resp.read().decode("utf-8", errors="ignore")
+
+    records = parse_html_content(html)
+    print(f"Direct HTTP fetch successful: {len(records)} problem statements extracted.")
+    return records
+
+
 def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_limit=None):
     """
     Navigates to the SIH Problem Statements page, iterates through pages and rows,
@@ -177,8 +213,12 @@ def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_l
 
     # Wait for the main table to load
     wait = WebDriverWait(driver, 20)
-    wait.until(EC.presence_of_element_located((By.ID, "dataTablePS")))
-    print("Page loaded successfully. Table located.")
+    try:
+        wait.until(EC.presence_of_element_located((By.ID, "dataTablePS")))
+        print("Page loaded successfully. Table located.")
+    except Exception as err:
+        print(f"Selenium table wait timed out or failed ({err}). Falling back to direct HTTP fetch...")
+        return scrape_via_http(base_url)
 
     # Optionally adjust page length to 100 entries per page if available
     try:
@@ -440,13 +480,23 @@ def main():
         save_and_rank_results(records, csv_file=args.csv, json_file=args.json)
         return
 
-    driver = setup_browser(headless=args.headless)
+    records = []
     try:
-        records = scrape_live_site(driver, base_url=args.url, page_limit=args.pages)
+        driver = setup_browser(headless=args.headless)
+        try:
+            records = scrape_live_site(driver, base_url=args.url, page_limit=args.pages)
+        finally:
+            driver.quit()
+            print("Browser closed.")
+    except Exception as browser_err:
+        print(f"Browser execution encountered an error: {browser_err}")
+        print("Switching to direct HTTP extraction fallback...")
+        records = scrape_via_http(base_url=args.url)
+
+    if records:
         save_and_rank_results(records, csv_file=args.csv, json_file=args.json)
-    finally:
-        driver.quit()
-        print("Browser closed.")
+    else:
+        print("Error: No records could be extracted from live portal or local fallback.")
 
 
 if __name__ == "__main__":
