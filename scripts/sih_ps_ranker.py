@@ -187,7 +187,12 @@ def scrape_via_http(base_url="https://www.sih.gov.in/sih2026PS"):
     req = urllib.request.Request(
         base_url,
         headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.sih.gov.in/",
+            "DNT": "1",
+            "Upgrade-Insecure-Requests": "1",
         }
     )
     with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
@@ -217,8 +222,9 @@ def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_l
         wait.until(EC.presence_of_element_located((By.ID, "dataTablePS")))
         print("Page loaded successfully. Table located.")
     except Exception as err:
-        print(f"Selenium table wait timed out or failed ({err}). Falling back to direct HTTP fetch...")
-        return scrape_via_http(base_url)
+        raise RuntimeError(
+            f"Selenium table wait timed out or failed ({err})."
+        ) from err
 
     # Optionally adjust page length to 100 entries per page if available
     try:
@@ -355,10 +361,28 @@ def scrape_live_site(driver, base_url="https://www.sih.gov.in/sih2026PS", page_l
             break
 
     if not results:
-        print("Warning: No records gathered from browser traversal. Falling back to direct HTTP extraction...")
-        return scrape_via_http(base_url)
+        raise RuntimeError("No records gathered from browser traversal.")
 
     return results
+
+
+def load_existing_results(json_file):
+    """Loads the last successful dataset when the live portal is unavailable."""
+    if not os.path.exists(json_file):
+        return []
+
+    try:
+        with open(json_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    except (OSError, json.JSONDecodeError) as err:
+        print(f"Could not load existing results from {json_file}: {err}")
+        return []
+
+    if not isinstance(records, list):
+        print(f"Existing results file {json_file} does not contain a record list.")
+        return []
+
+    return records
 
 
 def save_and_rank_results(records, csv_file="sih_ps_ranked.csv", json_file="sih_ps_ranked.json"):
@@ -495,14 +519,25 @@ def main():
     except Exception as browser_err:
         print(f"Browser execution encountered an error: {browser_err}")
         print("Switching to direct HTTP extraction fallback...")
-        records = scrape_via_http(base_url=args.url)
+        try:
+            records = scrape_via_http(base_url=args.url)
+        except Exception as http_err:
+            print(f"Direct HTTP extraction failed: {http_err}")
+            records = load_existing_results(args.json)
+            if records:
+                print(f"Using last successful dataset from {args.json}.")
+            else:
+                print("Error: No live or cached records are available.")
+                return 1
 
     if records:
         save_and_rank_results(records, csv_file=args.csv, json_file=args.json)
     else:
         print("Error: No records could be extracted from live portal or local fallback.")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
 
